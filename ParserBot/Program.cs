@@ -11,36 +11,60 @@ using DSharpPlus.EventArgs;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.Net;
+using System.Collections.Generic;
 
 namespace ParserBot
 {
     public class Program
     {
+        private const int MIN_GAME_LENGTH_SECONDS = 150;
         public readonly EventId BotEventId = new EventId(42, "Bot-Ex02");
 
         public DiscordClient Client { get; set; }
         public CommandsNextExtension Commands { get; set; }
 
-        public static void Main(string[] args)
+        public static void Main()
         {
-            //since we cannot make the entry method asynchronous,
-            //let's pass the execution to asynchronous code
             Thread Update = new Thread(new ThreadStart(UpdateDB));
             Update.Start();
             var prog = new Program();
             prog.RunBotAsync().GetAwaiter().GetResult();
-            //Parser.Program.parse_day(new WebClient(), DateTime.UtcNow.AddHours(-2));
         }
 
         private static void UpdateDB()
         {
+            GentoolParser gentoolParser = new GentoolParser(new WebClient());
+            PlayersStorage playersStorage = new FilesPlayersStorage();
+            StatisticsStorage statisticsStorage = new FilesStatisticsStorage();
+            ReplayTxtParser txtParser = new ReplayTxtParser(MIN_GAME_LENGTH_SECONDS);
             while (true)
             {
                 if (DateTime.UtcNow.Hour == 0)
                 {
-                    Parser.Program.parse_day(new WebClient(), DateTime.UtcNow.AddHours(-2));
+                    var date = DateTime.UtcNow;
+                    var players = playersStorage.GetPlayers();
+                    var playersFiles = gentoolParser.ParseDay(DateTime.Now.AddDays(-1), players.ToArray());
+                    var playersStats = new Dictionary<Player, PlayerStats>();
+                    foreach (var playerFilePair in playersFiles)
+                    {
+                        var stat = txtParser.Parse(playerFilePair.Value);
+                        if (!playersStats.ContainsKey(playerFilePair.Key))
+                        {
+                            playersStats[playerFilePair.Key] = new PlayerStats(stat);
+                        }
+                        else
+                        {
+                            playersStats[playerFilePair.Key] += stat;
+                        }
+                    }
+                    foreach (var playerStatPair in playersStats)
+                    {
+                        statisticsStorage.saveStats(date.Year, date.Month, date.Day, playerStatPair.Key, playerStatPair.Value);
+                    }
+                    
+
                 }
-                Thread.Sleep(3600000);
+                Thread.Sleep(1000 * 60 * 59);
             }
         }
 
